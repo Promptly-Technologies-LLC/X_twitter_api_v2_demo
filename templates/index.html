@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twitter Poster</title>
+</head>
+<body>
+    <form action="/" method="post" enctype="multipart/form-data">
+        <label for="text">Tweet Text:</label>
+        <textarea name="text" id="text" cols="30" rows="5"></textarea><br><br>
+        <label for="image">Select Image:</label>
+        <input type="file" name="image" id="image"><br><br>
+        <input type="submit" value="Post Tweet">
+    </form>
+    {% if tweet_link %}
+    <p>Here's your tweet: <a href="{{ tweet_link }}" target="_blank">View Tweet</a></p>
+    {% endif %}
+</body>
+</html>
