@@ -5,7 +5,9 @@ from dotenv import load_dotenv
 import secrets
 import base64
 import hashlib
-from urllib.parse import urlencode
+from urllib.parse import urlencode, parse_qs
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 
 load_dotenv()
 
@@ -17,6 +19,7 @@ SCOPES = "tweet.read tweet.write users.read offline.access media.write" # Add ot
 AUTHORIZATION_URL = "https://twitter.com/i/oauth2/authorize"
 TOKEN_URL = "https://api.x.com/2/oauth2/token"
 TWEET_URL = "https://api.x.com/2/tweets"
+MEDIA_URL = "https://api.twitter.com/2/media/upload"
 
 # --- Helper Functions ---
 def generate_code_verifier():
@@ -92,22 +95,25 @@ def post_tweet(access_token, text):
 def upload_media(access_token, file_path, media_category="tweet_image"):
     """Uploads media using the provided access token."""
     total_bytes = os.path.getsize(file_path)
-    mime_type = "image/jpeg" # Replace with your actual mime type
+    file_extension = file_path.split(".")[-1]
+    mime_type = f"image/{file_extension}"
     headers = {
         "Authorization": f"Bearer {access_token}",
     }
+    # INIT
     params = {
         "media_category": media_category,
         "total_bytes": total_bytes,
         "media_type": mime_type,
         "command": "INIT"
     }
-    response = requests.post(f"{TOKEN_URL}/media/upload", headers=headers, params=params)
+    response = requests.post(MEDIA_URL, headers=headers, params=params)
     response.raise_for_status()
     media_id = response.json()["media_id"]
 
+    # APPEND in chunks
     with open(file_path, "rb") as f:
-        chunk_size = 1024 * 1024 # 1MB chunks
+        chunk_size = 1024 * 1024  # 1MB chunks
         segment_index = 0
         while True:
             chunk = f.read(chunk_size)
@@ -119,15 +125,16 @@ def upload_media(access_token, file_path, media_category="tweet_image"):
                 "segment_index": segment_index
             }
             files = {"media": chunk}
-            response = requests.post(f"{TOKEN_URL}/media/upload", headers=headers, params=params, files=files)
+            response = requests.post(MEDIA_URL, headers=headers, params=params, files=files)
             response.raise_for_status()
             segment_index += 1
-    
+
+    # FINALIZE
     params = {
         "command": "FINALIZE",
         "media_id": media_id
     }
-    response = requests.post(f"{TOKEN_URL}/media/upload", headers=headers, params=params)
+    response = requests.post(MEDIA_URL, headers=headers, params=params)
     response.raise_for_status()
     return media_id
 
@@ -142,6 +149,32 @@ def post_tweet_with_media(access_token, text, media_ids):
     response.raise_for_status()
     return response.json()
 
+# --- HTTP Server Handler ---
+class OAuthCallbackHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith('/oauth/callback'):
+            query_params = parse_qs(self.path[self.path.find('?') + 1:])
+            auth_code = query_params.get('code', [None])[0]
+            returned_state = query_params.get('state', [None])[0]
+            
+            if auth_code and returned_state:
+                self.server.auth_code = auth_code
+                self.server.returned_state = returned_state
+                self.send_response(200)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(b"<html><head><title>Authorization Successful</title></head><body><h1>Authorization Successful</h1><p>You can close this window.</p></body></html>")
+            else:
+                self.send_response(400)
+                self.send_header('Content-type', 'text/html')
+                self.end_headers()
+                self.wfile.write(b"<html><head><title>Authorization Failed</title></head><body><h1>Authorization Failed</h1><p>Invalid parameters.</p></body></html>")
+        else:
+            self.send_response(404)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b"<html><head><title>Not Found</title></head><body><h1>Not Found</h1></body></html>")
+
 # --- Main Flow ---
 if __name__ == "__main__":
     # 1. Generate PKCE parameters
@@ -151,18 +184,29 @@ if __name__ == "__main__":
 
     # 2. Construct the authorization URL
     auth_url = create_authorization_url(code_challenge, state)
-    print(f"Authorization URL: {auth_url}")
-    print(f"State: {state}")
-    print(f"Code Verifier: {code_verifier}")
+    print(f"Please visit this URL to authorize the app:\n{auth_url}")
 
-    # 3. Get the authorization code from the user
-    auth_code = input("Paste the authorization code here: ")
-    returned_state = input("Paste the state here: ")
-    print(f"Returned State: {returned_state}")
+    # 3. Start the HTTP server in a separate thread
+    server_address = ('127.0.0.1', 5000)
+    httpd = HTTPServer(server_address, OAuthCallbackHandler)
+    httpd.auth_code = None
+    httpd.returned_state = None
+    server_thread = threading.Thread(target=httpd.serve_forever)
+    server_thread.daemon = True
+    server_thread.start()
+
+    # 4. Wait for the authorization code
+    while httpd.auth_code is None:
+        pass
+    auth_code = httpd.auth_code
+    returned_state = httpd.returned_state
+    httpd.shutdown()
+    print("Authorization code received.")
+
     if returned_state != state:
         raise Exception("State does not match")
 
-    # 4. Exchange the authorization code for an access token
+    # 5. Exchange the authorization code for an access token
     try:
         token_response = get_access_token(auth_code, code_verifier)
         access_token = token_response["access_token"]
@@ -172,7 +216,7 @@ if __name__ == "__main__":
         print(f"Error obtaining access token: {e}")
         exit()
 
-    # 5. (Optional) Refresh the access token if needed
+    # 6. (Optional) Refresh the access token if needed
     if refresh_token:
         try:
             refreshed_token_response = refresh_access_token(refresh_token)
@@ -183,23 +227,23 @@ if __name__ == "__main__":
             print(f"Error refreshing access token: {e}")
             exit()
 
-    # 6. Post a tweet
-    try:
-        tweet_text = "Hello world! This is a test tweet using OAuth 2.0."
-        tweet_response = post_tweet(access_token, tweet_text)
-        print(f"Tweet posted successfully: {tweet_response}")
-    except requests.exceptions.RequestException as e:
-        print(f"Error posting tweet: {e}")
+    # 7. Post a tweet
+    # try:
+    #     tweet_text = "Hello world! This is a test tweet using OAuth 2.0."
+    #     tweet_response = post_tweet(access_token, tweet_text)
+    #     print(f"Tweet posted successfully: {tweet_response}")
+    # except requests.exceptions.RequestException as e:
+    #     print(f"Error posting tweet: {e}")
 
-    # 7. Upload media
+    # 8. Upload media
     try:
-        media_id = upload_media(access_token, "test.jpg") # Replace with your actual file path
+        media_id = upload_media(access_token, "test.png") # Replace with your actual file path
         print(f"Media uploaded successfully: {media_id}")
     except requests.exceptions.RequestException as e:
         print(f"Error uploading media: {e}")
         exit()
 
-    # 8. Post a tweet with media
+    # 9. Post a tweet with media
     try:
         tweet_text = "Hello world! This is a test tweet with media using OAuth 2.0."
         tweet_response = post_tweet_with_media(access_token, tweet_text, [media_id])
