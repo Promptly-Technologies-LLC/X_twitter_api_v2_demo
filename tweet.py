@@ -7,25 +7,23 @@ import tweepy
 from dotenv import load_dotenv
 from requests_oauthlib import OAuth2Session
 from flask import Flask, request, redirect, session, render_template
+import tempfile
+import atexit
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Initialize the Flask application
-app = Flask(import_name=__name__)
+app = Flask(__name__)
 # Set a random secret key for the Flask session
 app.secret_key = os.urandom(50)
 
 # Load environment variables from a .env file
 load_dotenv()
-# Retrieve necessary credentials and settings from environment variables
-client_id = os.environ.get("X_CLIENT_ID")
-client_secret = os.environ.get("X_CLIENT_SECRET")
-auth_url = "https://twitter.com/i/oauth2/authorize"
-token_url = "https://api.twitter.com/2/oauth2/token"
-redirect_uri = os.environ.get("X_REDIRECT_URI")
-text_to_tweet = os.environ.get("TEXT_TO_TWEET")
-media_path_to_tweet = os.environ.get("MEDIA_PATH_TO_TWEET")
 
 # Define the scopes needed for the OAuth2 flow
-scopes = ["tweet.read", "users.read", "tweet.write"]
+scopes = ["tweet.read", "users.read", "tweet.write", "media.write"]
 
 # Generate a code verifier and its corresponding challenge for the OAuth2 flow
 code_verifier = base64.urlsafe_b64encode(s=os.urandom(30)).decode(encoding="utf-8")
@@ -41,12 +39,15 @@ def create_media_payload(path) -> dict[str, dict[str, list[str]]]:
     tweepy_auth = tweepy.OAuth1UserHandler(
         consumer_key="{}".format(os.environ.get("X_API_KEY")),
         consumer_secret="{}".format(os.environ.get("X_API_SECRET")),
-        access_token="{}".format(os.environ.get("X_ACCESS_TOKEN")),
-        access_token_secret="{}".format(os.environ.get("X_ACCESS_TOKEN_SECRET")),
+        callback="{}".format(os.environ.get("X_REDIRECT_URI"))
     )
     tweepy_api = tweepy.API(auth=tweepy_auth)
     # Upload the image to Twitter
-    post = tweepy_api.simple_upload(filename=path)
+    try:
+        post = tweepy_api.simple_upload(filename=path)
+    except tweepy.errors.Forbidden as e:
+        logging.error(f"Error uploading media: {e}")
+        return {"media": {"media_ids": []}} # Return an empty media payload
     # Extract the media ID from the response
     text = str(object=post)
     media_id = re.search(pattern="media_id=(.+?),", string=text).group(1)
@@ -86,6 +87,18 @@ def post_tweet(text, media_path=None, new_token=None) -> requests.Response:
         },
     )
 
+def get_temp_dir():
+    if 'temp_dir' not in app.config:
+        app.config['temp_dir'] = tempfile.mkdtemp()
+    return app.config['temp_dir']
+
+def cleanup_temp_dir():
+    temp_dir = app.config.get('temp_dir')
+    if temp_dir and os.path.exists(temp_dir):
+        import shutil
+        shutil.rmtree(temp_dir)
+
+atexit.register(cleanup_temp_dir)
 
 # Route to handle the initial step of the OAuth2 flow and tweet posting form
 @app.route(rule="/", methods=["GET", "POST"])
@@ -97,9 +110,9 @@ def index():
         # Check if an image was uploaded
         if "image" in request.files and request.files["image"].filename != "":
             image = request.files["image"]
-            # Ensure the 'temp' directory exists
-            os.makedirs("temp", exist_ok=True)
-            image_path = os.path.join("temp", image.filename)
+            # Create a temporary directory
+            temp_dir = get_temp_dir()
+            image_path = os.path.join(temp_dir, image.filename)
             image.save(dst=image_path)
             session["image_path"] = image_path
         else:
@@ -107,9 +120,13 @@ def index():
 
         # Start the OAuth2 flow to authenticate with Twitter
         global twitter
-        twitter = OAuth2Session(client_id=client_id, redirect_uri=redirect_uri, scope=scopes)
+        twitter = OAuth2Session(
+            client_id=os.environ.get("X_CLIENT_ID"),
+            redirect_uri=os.environ.get("X_REDIRECT_URI"),
+            scope=scopes
+        )
         authorization_url, state = twitter.authorization_url(
-            url=auth_url, code_challenge=code_challenge, code_challenge_method="S256"
+            url="https://twitter.com/i/oauth2/authorize", code_challenge=code_challenge, code_challenge_method="S256"
         )
         session["oauth_state"] = state
         # Redirect the user to Twitter's authentication page
@@ -122,25 +139,21 @@ def index():
 # Route to handle the callback from Twitter after successful OAuth2 authentication
 @app.route(rule="/oauth/callback", methods=["GET"])
 def callback() -> requests.Response:
-    text = session.get("text", default=text_to_tweet)
-    image_path = session.get("image_path", default=media_path_to_tweet)
+    text = session.get("text", default=os.environ.get("TEXT_TO_TWEET"))
+    image_path = session.get("image_path", default=os.environ.get("MEDIA_PATH_TO_TWEET"))
 
     # Retrieve the code from the callback URL's query parameters
     code = request.args.get(key="code")
     # Fetch the OAuth2 token using the provided code
     token = twitter.fetch_token(
-        token_url=token_url,
-        client_secret=client_secret,
+        token_url="https://api.twitter.com/2/oauth2/token",
+        client_secret=os.environ.get("X_CLIENT_SECRET"),
         code_verifier=code_verifier,
         code=code,
     )
-    
+
     # Post the tweet using the provided text and image
     response = post_tweet(text=text, media_path=image_path, new_token=token)
-    
-    # Delete any uploaded image from the server
-    if image_path and os.path.exists(path=image_path):
-        os.remove(path=image_path)
 
     # Extract the tweet's link from the response and display it to the user
     tweet_text = response.json().get("data", {}).get("text", "")
