@@ -6,7 +6,7 @@ import requests
 import tweepy
 from dotenv import load_dotenv
 from requests_oauthlib import OAuth2Session
-from flask import Flask, request, redirect, session, render_template, flash
+from flask import Flask, request, redirect, session, render_template
 
 # Initialize the Flask application
 app = Flask(import_name=__name__)
@@ -91,12 +91,19 @@ def post_tweet(text, media_path=None, new_token=None) -> requests.Response:
 @app.route(rule="/", methods=["GET", "POST"])
 def index():
     if request.method == "POST":
-        # Store the tweet's text and image path in the Flask session
+        # Store the tweet's text in the Flask session
         session["text"] = request.form.get(key="text")
-        image = request.files["image"]
-        image_path = os.path.join("temp", image.filename)
-        image.save(dst=image_path)
-        session["image_path"] = image_path
+        
+        # Check if an image was uploaded
+        if "image" in request.files and request.files["image"].filename != "":
+            image = request.files["image"]
+            # Ensure the 'temp' directory exists
+            os.makedirs("temp", exist_ok=True)
+            image_path = os.path.join("temp", image.filename)
+            image.save(dst=image_path)
+            session["image_path"] = image_path
+        else:
+            session["image_path"] = None
 
         # Start the OAuth2 flow to authenticate with Twitter
         global twitter
@@ -132,7 +139,7 @@ def callback() -> requests.Response:
     response = post_tweet(text=text, media_path=image_path, new_token=token)
     
     # Delete any uploaded image from the server
-    if os.path.exists(path=image_path):
+    if image_path and os.path.exists(path=image_path):
         os.remove(path=image_path)
 
     # Extract the tweet's link from the response and display it to the user
