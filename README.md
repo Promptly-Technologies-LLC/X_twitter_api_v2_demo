@@ -25,12 +25,12 @@ Consult the [uv installation docs](https://astral.sh/uv/) for more detailed inst
 Once uv is installed on your system, clone this repo with:
 
 ```bash
-git clone https://github.com/chriscarrollsmith/X_TWITTER_API_V2_DEMO.git
+git clone https://github.com/Promptly-Technologies-LLC/X_twitter_api_v2_demo
 ```
 
 Then:
 
-1. Navigate to the cloned directory with `cd X_TWITTER_API_V2_DEMO`.
+1. Navigate to the cloned directory with `cd X_twitter_api_v2_demo`.
 2. Install dependencies with `uv sync`.
 3. Copy the `example.env` file to `.env` with `cp example.env .env`.
 4. Edit the `.env` file and add your API key, API secret, client token, client secret, access token, and access secret (for instructions on how to get these, see below).
@@ -51,8 +51,8 @@ You will also need to generate an access token and secret from your application'
 
 ## Usage
 
-To run the application, use `uv run tweet.py`. This will start a Flask server on port 5000. You can then navigate to `[http://127.0.0.1:5000](http://127.0.0.1:5000)` in a web browser to view the app.
+To run the application, use `uv run tweet.py`. This will start a Flask server on port 5000. You can then navigate to [http://127.0.0.1:5000](http://127.0.0.1:5000) in a web browser to view the app.
 
 The app consists of a simple form that allows you to input text and select an image to go with the text. Supply some text and then click "Post Tweet". You will be redirected to Twitter to authenticate with your account. Once you authenticate, you will be redirected back to the app, which will display a link to your posted tweet.
 
-That's it. That's all this app does. It's just a simple demo to illustrate how to connect to the Twitter API v2 via Python Flask.
+That's it. That's all this app does. It's just a simple demo to illustrate how to connect to the Twitter API v2 via Python FastAPI.
