@@ -37,9 +37,10 @@ code_challenge = code_challenge.replace("=", "")
 def create_media_payload(path) -> dict[str, dict[str, list[str]]]:
     # Authenticate with Twitter using Tweepy and OAuth1
     tweepy_auth = tweepy.OAuth1UserHandler(
-        consumer_key="{}".format(os.environ.get("X_API_KEY")),
-        consumer_secret="{}".format(os.environ.get("X_API_SECRET")),
-        callback="{}".format(os.environ.get("X_REDIRECT_URI"))
+        consumer_key=os.environ.get("X_API_KEY"),
+        consumer_secret=os.environ.get("X_API_SECRET"),
+        access_token=os.environ.get("X_ACCESS_TOKEN"),
+        access_token_secret=os.environ.get("X_ACCESS_TOKEN_SECRET")
     )
     tweepy_api = tweepy.API(auth=tweepy_auth)
     # Upload the image to Twitter
@@ -79,7 +80,7 @@ def post_tweet(text, media_path=None, new_token=None) -> requests.Response:
     # Send a POST request to Twitter's API to post the tweet
     return requests.request(
         method="POST",
-        url="https://api.twitter.com/2/tweets",
+        url="https://api.x.com/2/tweets",
         json=tweet_payload,
         headers={
             "Authorization": "Bearer {}".format(new_token["access_token"]),
@@ -146,7 +147,7 @@ def callback() -> requests.Response:
     code = request.args.get(key="code")
     # Fetch the OAuth2 token using the provided code
     token = twitter.fetch_token(
-        token_url="https://api.twitter.com/2/oauth2/token",
+        token_url="https://api.x.com/2/oauth2/token",
         client_secret=os.environ.get("X_CLIENT_SECRET"),
         code_verifier=code_verifier,
         code=code,
@@ -157,7 +158,7 @@ def callback() -> requests.Response:
 
     # Extract the tweet's link from the response and display it to the user
     tweet_text = response.json().get("data", {}).get("text", "")
-    tweet_link_match = re.search(pattern=r"https://t\.co/\w+", string=tweet_text)
+    tweet_link_match = re.search(pattern=r"https://(?:t\.co|x\.com)/\w+", string=tweet_text)
     tweet_link = tweet_link_match.group(0) if tweet_link_match else None
 
     return render_template(template_name_or_list="index.html", tweet_link=tweet_link)
