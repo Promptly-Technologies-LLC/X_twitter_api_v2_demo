@@ -3,7 +3,6 @@ import hashlib
 import os
 import re
 import requests
-import tweepy
 from dotenv import load_dotenv
 from requests_oauthlib import OAuth2Session
 from fastapi import FastAPI, Request, Form, File, UploadFile
@@ -14,9 +13,11 @@ import atexit
 import logging
 import shutil
 import uuid
+from requests_oauthlib import OAuth1
 
 # Configure logging
-logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("uvicorn.error")
+logger.setLevel(logging.INFO)
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -59,26 +60,28 @@ atexit.register(cleanup_temp_dir)
 
 def create_media_payload(path) -> dict[str, dict[str, list[str]]]:
     """
-    Authenticate using Tweepy (OAuth1) and upload media.
-    Return a payload containing the media ID.
+    Upload media using OAuth1 authentication and return a payload containing the media ID.
     """
-    tweepy_auth = tweepy.OAuth1UserHandler(
-        consumer_key=os.environ.get("X_API_KEY"),
-        consumer_secret=os.environ.get("X_API_SECRET"),
-        access_token=os.environ.get("X_ACCESS_TOKEN"),
-        access_token_secret=os.environ.get("X_ACCESS_TOKEN_SECRET")
+    auth = OAuth1(
+        os.environ.get("X_API_KEY"),
+        os.environ.get("X_API_SECRET"),
+        os.environ.get("X_ACCESS_TOKEN"),
+        os.environ.get("X_ACCESS_TOKEN_SECRET")
     )
-    tweepy_api = tweepy.API(auth=tweepy_auth)
-    # Upload the image to Twitter
+    
+    upload_url = "https://upload.twitter.com/1.1/media/upload.json"
     try:
-        post = tweepy_api.simple_upload(filename=path)
-    except tweepy.errors.Forbidden as e:
+        with open(path, "rb") as file:
+            files = {"media": file}
+            response = requests.post(upload_url, auth=auth, files=files)
+            response.raise_for_status()
+            media_id = response.json().get("media_id_string")
+            if media_id:
+                return {"media": {"media_ids": [media_id]}}
+    except Exception as e:
         logging.error(f"Error uploading media: {e}")
-        return {"media": {"media_ids": []}}
-    text = str(post)
-    media_id = re.search(pattern="media_id=(.+?),", string=text).group(1)
-    media_payload = {"media": {"media_ids": [f"{media_id}"]}}
-    return media_payload
+    
+    return {"media": {"media_ids": []}}
 
 def create_text_payload(text) -> dict[str, str]:
     return {"text": text}
@@ -182,6 +185,30 @@ def callback(request: Request, code: str, state: str):
 
     # Post the tweet
     response = post_tweet(text=text, media_path=image_path, new_token=token)
+    
+    message = None
+    if response.ok:
+        message = "Tweet posted successfully!"
+    else:
+        try:
+            error_details = response.json()
+            if 'errors' in error_details:
+                # Handle Twitter API specific error format
+                error_messages = [error['message'] for error in error_details['errors']]
+                message = f"Twitter API Error: {'; '.join(error_messages)}"
+            else:
+                # Handle general API errors
+                status_code = response.status_code
+                if status_code == 429:
+                    message = "Rate limit exceeded. Please wait a few minutes and try again."
+                else:
+                    # Get the most meaningful error detail
+                    detail = error_details.get('detail') or error_details.get('title') or response.reason
+                    message = f"Error ({status_code}): {detail}"
+        except ValueError:
+            message = f"Error ({response.status_code}): {response.reason}"
+        
+        logger.error(f"Failed to post tweet: {response.status_code} {response.reason} - {response.text}")
 
     # Attempt to extract the short t.co or x.com link from the returned tweet text
     tweet_text = response.json().get("data", {}).get("text", "")
@@ -196,7 +223,7 @@ def callback(request: Request, code: str, state: str):
         {
             "request": request,
             "tweet_link": tweet_link,
-            "message": "Tweet posted successfully!" if response.ok else "Failed to post tweet."
+            "message": message
         }
     )
 
