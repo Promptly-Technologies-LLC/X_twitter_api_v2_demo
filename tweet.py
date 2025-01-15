@@ -32,11 +32,12 @@ templates = Jinja2Templates(directory="templates")
 scopes = ["tweet.read", "users.read", "tweet.write", "media.write"]
 
 # Generate a code verifier and its corresponding challenge for the OAuth2 flow
-code_verifier = base64.urlsafe_b64encode(s=os.urandom(30)).decode(encoding="utf-8")
-code_verifier = re.sub(pattern="[^a-zA-Z0-9]+", repl="", string=code_verifier)
-code_challenge = hashlib.sha256(string=code_verifier.encode(encoding="utf-8")).digest()
-code_challenge = base64.urlsafe_b64encode(s=code_challenge).decode(encoding="utf-8")
-code_challenge = code_challenge.replace("=", "")
+code_verifier: bytes = base64.urlsafe_b64encode(s=os.urandom(30))
+code_verifier_str: str = code_verifier.decode(encoding="utf-8")
+code_verifier_str = re.sub(pattern="[^a-zA-Z0-9]+", repl="", string=code_verifier_str)
+code_challenge: bytes = hashlib.sha256(string=code_verifier_str.encode(encoding="utf-8")).digest()
+code_challenge_str: str = base64.urlsafe_b64encode(s=code_challenge).decode(encoding="utf-8")
+code_challenge_str = code_challenge_str.replace("=", "")
 
 # Global dictionary to map an OAuth 'state' to the data needed in callback
 oauth_states = {}
