@@ -1,10 +1,10 @@
-# Twitter/X API v2 Connectivity Demo with Python Flask
+# Twitter/X API v2 Connectivity Demo with Python FastAPI
 
 X has officially launched version 2 of the Twitter API. And despite Elon Musk's threats to discontinue all free access to the API, there **is** a [free tier](https://developer.twitter.com/en/docs/twitter-api/getting-started/about-twitter-api) available. It is quite limited, however. Free users can only access the endpoints to upload media, create tweets (up to 500 per month), and manage their own user data. They can't view tweets, like tweets, retweet tweets, or reply to tweets. They can't even view their own timeline. The free-tier endpoints also don't support application authentication, so you have to use Oauth2 user authentication, in which the user manually logs into their account and authorizes the app to use it.
 
 (Note that it is still possible to create an automated bot. You will just have to manually authorize it when you first spin it up, and then the bot can continually generate refresh tokens to keep itself logged in. This is a bit of a pain, because it requires database storage of refresh tokens and regular workflow runs to generate new ones. That is, however, outside the scope of this demo.)
 
-Currently, the documentation for API connectivity via the free tier is extremely limited. In the absence of good docs, I've created this demo to illustrate how to connect to the v2 API via a Python Flask application. It's a little complicated, especially if you want to tweet media, because the media upload endpoint still uses OAuth1, whereas the tweet endpoint uses OAuth2. So you have to use both authentication methods in the same app.
+Currently, the documentation for API connectivity via the free tier is extremely limited. In the absence of good docs, I've created this demo to illustrate how to connect to the v2 API via a Python FastAPI application. It's a little complicated, especially if you want to tweet media, because the media upload endpoint still uses OAuth1, whereas the tweet endpoint uses OAuth2. So you have to use both authentication methods in the same app.
 
 ## Setup
 
