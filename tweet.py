@@ -6,21 +6,26 @@ import requests
 import tweepy
 from dotenv import load_dotenv
 from requests_oauthlib import OAuth2Session
-from flask import Flask, request, redirect, session, render_template
+from fastapi import FastAPI, Request, Form, File, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
 import tempfile
 import atexit
 import logging
+import shutil
+import uuid
 
 # Configure logging
 logging.basicConfig(level=logging.ERROR, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Initialize the Flask application
-app = Flask(__name__)
-# Set a random secret key for the Flask session
-app.secret_key = os.urandom(50)
-
 # Load environment variables from a .env file
 load_dotenv()
+
+# FastAPI application
+app = FastAPI()
+
+# Use Jinja2 templates (ensure you have a folder named "templates" with your .html files)
+templates = Jinja2Templates(directory="templates")
 
 # Define the scopes needed for the OAuth2 flow
 scopes = ["tweet.read", "users.read", "tweet.write", "media.write"]
@@ -32,10 +37,31 @@ code_challenge = hashlib.sha256(string=code_verifier.encode(encoding="utf-8")).d
 code_challenge = base64.urlsafe_b64encode(s=code_challenge).decode(encoding="utf-8")
 code_challenge = code_challenge.replace("=", "")
 
+# Global dictionary to map an OAuth 'state' to the data needed in callback
+oauth_states = {}
 
-# Function to upload media and return its media ID
+# In-memory path for the temp directory
+temp_dir_path = None
+
+def get_temp_dir():
+    global temp_dir_path
+    if not temp_dir_path:
+        temp_dir_path = tempfile.mkdtemp()
+    return temp_dir_path
+
+def cleanup_temp_dir():
+    global temp_dir_path
+    if temp_dir_path and os.path.exists(temp_dir_path):
+        shutil.rmtree(temp_dir_path)
+        temp_dir_path = None
+
+atexit.register(cleanup_temp_dir)
+
 def create_media_payload(path) -> dict[str, dict[str, list[str]]]:
-    # Authenticate with Twitter using Tweepy and OAuth1
+    """
+    Authenticate using Tweepy (OAuth1) and upload media.
+    Return a payload containing the media ID.
+    """
     tweepy_auth = tweepy.OAuth1UserHandler(
         consumer_key=os.environ.get("X_API_KEY"),
         consumer_secret=os.environ.get("X_API_SECRET"),
@@ -48,30 +74,21 @@ def create_media_payload(path) -> dict[str, dict[str, list[str]]]:
         post = tweepy_api.simple_upload(filename=path)
     except tweepy.errors.Forbidden as e:
         logging.error(f"Error uploading media: {e}")
-        return {"media": {"media_ids": []}} # Return an empty media payload
-    # Extract the media ID from the response
-    text = str(object=post)
+        return {"media": {"media_ids": []}}
+    text = str(post)
     media_id = re.search(pattern="media_id=(.+?),", string=text).group(1)
-    # Return the media ID in the required payload format
-    media_payload = {"media": {"media_ids": ["{}".format(media_id)]}}
+    media_payload = {"media": {"media_ids": [f"{media_id}"]}}
     return media_payload
 
-
-# Function to create a text payload for our request
 def create_text_payload(text) -> dict[str, str]:
-    text_payload = {"text": text}
-    return text_payload
+    return {"text": text}
 
-
-# Function to create a combined payload with both text and media for the tweet
-def create_tweet_payload(text, media_path=None) -> dict[str, dict[str, list[str]]]:
+def create_tweet_payload(text, media_path=None) -> dict:
     text_payload = create_text_payload(text=text)
     if media_path is None:
-        tweet_payload = text_payload
-    else:
-        media_payload = create_media_payload(path=media_path)
-        tweet_payload = {**text_payload, **media_payload}
-    return tweet_payload
+        return text_payload
+    media_payload = create_media_payload(path=media_path)
+    return {**text_payload, **media_payload}
 
 
 # Function to post a tweet using the provided text and media
@@ -83,87 +100,108 @@ def post_tweet(text, media_path=None, new_token=None) -> requests.Response:
         url="https://api.x.com/2/tweets",
         json=tweet_payload,
         headers={
-            "Authorization": "Bearer {}".format(new_token["access_token"]),
+            "Authorization": f"Bearer {new_token['access_token']}",
             "Content-Type": "application/json",
         },
     )
 
-def get_temp_dir():
-    if 'temp_dir' not in app.config:
-        app.config['temp_dir'] = tempfile.mkdtemp()
-    return app.config['temp_dir']
+@app.get("/", response_class=HTMLResponse)
+def show_form(request: Request):
+    """
+    Serve a basic form (index.html) for posting tweets.
+    """
+    return templates.TemplateResponse("index.html", {"request": request})
 
-def cleanup_temp_dir():
-    temp_dir = app.config.get('temp_dir')
-    if temp_dir and os.path.exists(temp_dir):
-        import shutil
-        shutil.rmtree(temp_dir)
+@app.post("/", response_class=HTMLResponse)
+async def start_oauth(
+    request: Request,
+    text: str = Form(...),
+    image: UploadFile = File(None)
+):
+    """
+    Handle the form submission:
+      - Save text and image.
+      - Begin OAuth flow with Twitter.
+    """
+    # Save the text and optional image in a newly generated state
+    state = str(uuid.uuid4())
+    data_to_store = {"text": text, "image_path": None}
 
-atexit.register(cleanup_temp_dir)
+    if image and image.filename:
+        temp_dir = get_temp_dir()
+        image_path = os.path.join(temp_dir, image.filename)
+        with open(image_path, "wb") as buffer:
+            buffer.write(await image.read())
+        data_to_store["image_path"] = image_path
 
-# Route to handle the initial step of the OAuth2 flow and tweet posting form
-@app.route(rule="/", methods=["GET", "POST"])
-def index():
-    if request.method == "POST":
-        # Store the tweet's text in the Flask session
-        session["text"] = request.form.get(key="text")
-        
-        # Check if an image was uploaded
-        if "image" in request.files and request.files["image"].filename != "":
-            image = request.files["image"]
-            # Create a temporary directory
-            temp_dir = get_temp_dir()
-            image_path = os.path.join(temp_dir, image.filename)
-            image.save(dst=image_path)
-            session["image_path"] = image_path
-        else:
-            session["image_path"] = None
+    # Create an OAuth2Session and store relevant data
+    twitter_session = OAuth2Session(
+        client_id=os.environ.get("X_CLIENT_ID"),
+        redirect_uri=os.environ.get("X_REDIRECT_URI"),
+        scope=scopes
+    )
+    authorization_url, oauth_state = twitter_session.authorization_url(
+        "https://twitter.com/i/oauth2/authorize",
+        code_challenge=code_challenge,
+        code_challenge_method="S256"
+    )
 
-        # Start the OAuth2 flow to authenticate with Twitter
-        global twitter
-        twitter = OAuth2Session(
-            client_id=os.environ.get("X_CLIENT_ID"),
-            redirect_uri=os.environ.get("X_REDIRECT_URI"),
-            scope=scopes
-        )
-        authorization_url, state = twitter.authorization_url(
-            url="https://twitter.com/i/oauth2/authorize", code_challenge=code_challenge, code_challenge_method="S256"
-        )
-        session["oauth_state"] = state
-        # Redirect the user to Twitter's authentication page
-        return redirect(location=authorization_url)
+    # Store everything in our global map keyed by the state from the library
+    oauth_states[oauth_state] = {
+        "text": data_to_store["text"],
+        "image_path": data_to_store["image_path"],
+        "twitter_session": twitter_session
+    }
 
-    # If the request method is GET, render the index.html template
-    return render_template(template_name_or_list="index.html")
+    # Redirect to Twitter's OAuth page
+    return RedirectResponse(authorization_url)
 
+@app.get("/oauth/callback", response_class=HTMLResponse)
+def callback(request: Request, code: str, state: str):
+    """
+    Callback route after user authenticates with Twitter.
+      - Exchange code for token.
+      - Post the tweet.
+    """
+    # Retrieve stored info for this state
+    if state not in oauth_states:
+        return HTMLResponse(content="Invalid state or session has expired.", status_code=400)
 
-# Route to handle the callback from Twitter after successful OAuth2 authentication
-@app.route(rule="/oauth/callback", methods=["GET"])
-def callback() -> requests.Response:
-    text = session.get("text", default=os.environ.get("TEXT_TO_TWEET"))
-    image_path = session.get("image_path", default=os.environ.get("MEDIA_PATH_TO_TWEET"))
+    stored_data = oauth_states[state]
+    text = stored_data["text"]
+    image_path = stored_data["image_path"]
+    twitter_session = stored_data["twitter_session"]
 
-    # Retrieve the code from the callback URL's query parameters
-    code = request.args.get(key="code")
-    # Fetch the OAuth2 token using the provided code
-    token = twitter.fetch_token(
+    # Exchange code for token
+    token = twitter_session.fetch_token(
         token_url="https://api.x.com/2/oauth2/token",
         client_secret=os.environ.get("X_CLIENT_SECRET"),
         code_verifier=code_verifier,
-        code=code,
+        code=code
     )
 
-    # Post the tweet using the provided text and image
+    # Post the tweet
     response = post_tweet(text=text, media_path=image_path, new_token=token)
 
-    # Extract the tweet's link from the response and display it to the user
+    # Attempt to extract the short t.co or x.com link from the returned tweet text
     tweet_text = response.json().get("data", {}).get("text", "")
-    tweet_link_match = re.search(pattern=r"https://(?:t\.co|x\.com)/\w+", string=tweet_text)
+    tweet_link_match = re.search(r"https://(?:t\.co|x\.com)/\w+", tweet_text)
     tweet_link = tweet_link_match.group(0) if tweet_link_match else None
 
-    return render_template(template_name_or_list="index.html", tweet_link=tweet_link)
+    # Remove state data to avoid re-use or memory leaks
+    del oauth_states[state]
 
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "tweet_link": tweet_link,
+            "message": "Tweet posted successfully!" if response.ok else "Failed to post tweet."
+        }
+    )
 
-# Run the Flask application
+# To run this app:
+#   uvicorn tweet:app --host 0.0.0.0 --port 5000
 if __name__ == "__main__":
-    app.run()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
