@@ -1,132 +1,35 @@
-import base64
-import hashlib
 import os
 import re
-import secrets
-import requests
+import logging
+import uuid
 from dotenv import load_dotenv
-from requests_oauthlib import OAuth2Session
 from fastapi import FastAPI, Request, Form, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-import tempfile
-import atexit
-import logging
-import shutil
-import uuid
-from requests_oauthlib import OAuth1
+
+from x_twitter_api_v2_demo.auth import (
+    generate_code_verifier,
+    generate_code_challenge,
+    create_oauth2_session,
+)
+from x_twitter_api_v2_demo.tweet import post_tweet
+from x_twitter_api_v2_demo.utils import get_temp_dir
 
 # Configure logging
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.INFO)
 
-# Load environment variables from a .env file
+# Load environment variables
 load_dotenv()
 
 # FastAPI application
 app = FastAPI()
-
-# Use Jinja2 templates (ensure you have a folder named "templates" with your .html files)
 templates = Jinja2Templates(directory="templates")
 
-# Define the scopes needed for the OAuth2 flow
-scopes = ["tweet.read", "tweet.write", "users.read", "offline.access", "media.write"]
-
-# Global dictionary to map an OAuth 'state' to the data needed in callback
+# Global state
 oauth_states = {}
-
-# In-memory path for the temp directory
-temp_dir_path = None
-
-
-def get_temp_dir():
-    global temp_dir_path
-    if not temp_dir_path:
-        temp_dir_path = tempfile.mkdtemp()
-    return temp_dir_path
-
-
-def cleanup_temp_dir():
-    global temp_dir_path
-    if temp_dir_path and os.path.exists(temp_dir_path):
-        shutil.rmtree(temp_dir_path)
-        temp_dir_path = None
-
-
-atexit.register(cleanup_temp_dir)
-
-
-def generate_code_verifier() -> str:
-    """Generates a random code verifier string."""
-    return secrets.token_urlsafe(100)
-
-
-def generate_code_challenge(code_verifier: str) -> str:
-    """Generates the code challenge from the code verifier."""
-    code_challenge: bytes = hashlib.sha256(code_verifier.encode()).digest()
-    code_challenge_b64: str = base64.urlsafe_b64encode(code_challenge).decode()
-    code_challenge_b64 = code_challenge_b64.rstrip("=")
-    return code_challenge_b64
-
-
 code_verifier = generate_code_verifier()
 code_challenge = generate_code_challenge(code_verifier)
-
-
-def create_media_payload(path) -> dict[str, dict[str, list[str]]]:
-    """
-    Upload media using OAuth1 authentication and return a payload containing the media ID.
-    """
-    auth = OAuth1(
-        os.environ.get("X_API_KEY"),
-        os.environ.get("X_API_SECRET"),
-        os.environ.get("X_ACCESS_TOKEN"),
-        os.environ.get("X_ACCESS_TOKEN_SECRET")
-    )
-    
-    upload_url = "https://upload.twitter.com/1.1/media/upload.json"
-    try:
-        with open(path, "rb") as file:
-            files = {"media": file}
-            logger.info(f"Uploading media to {upload_url}")
-            response = requests.post(upload_url, auth=auth, files=files)
-            response.raise_for_status()
-            media_id = response.json().get("media_id_string")
-            if media_id:
-                return {"media": {"media_ids": [media_id]}}
-    except Exception as e:
-        logger.error(f"Error uploading media: {e}")
-    
-    return {"media": {"media_ids": []}}
-
-
-def create_text_payload(text) -> dict[str, str]:
-    return {"text": text}
-
-
-def create_tweet_payload(text, media_path=None) -> dict:
-    text_payload = create_text_payload(text=text)
-    if media_path is None:
-        return text_payload
-    media_payload = create_media_payload(path=media_path)
-    return {**text_payload, **media_payload}
-
-
-# Function to post a tweet using the provided text and media
-def post_tweet(text, media_path=None, new_token=None) -> requests.Response:
-    tweet_payload = create_tweet_payload(text=text, media_path=media_path)
-    # Send a POST request to Twitter's API to post the tweet
-    logger.info(f"Posting tweet with payload: {tweet_payload}")
-    return requests.request(
-        method="POST",
-        url="https://api.x.com/2/tweets",
-        json=tweet_payload,
-        headers={
-            "Authorization": f"Bearer {new_token['access_token']}",
-            "Content-Type": "application/json",
-        },
-    )
-
 
 @app.get("/", response_class=HTMLResponse)
 def show_form(request: Request):
@@ -159,11 +62,7 @@ async def start_oauth(
         data_to_store["image_path"] = image_path
 
     # Create an OAuth2Session and store relevant data
-    twitter_session = OAuth2Session(
-        client_id=os.environ.get("X_CLIENT_ID"),
-        redirect_uri=os.environ.get("X_REDIRECT_URI"),
-        scope=scopes
-    )
+    twitter_session = create_oauth2_session()
     logger.info(f"Starting OAuth2 flow with Twitter")
     assert code_challenge is not None, "Code challenge is not set"
     authorization_url, oauth_state = twitter_session.authorization_url(
