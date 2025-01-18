@@ -55,4 +55,6 @@ To run the application, use `uv run python main.py`. This will start a FastAPI s
 
 The app consists of a simple form that allows you to input text and select an image to go with the text. Supply some text and then click "Post Tweet". You will be redirected to Twitter to authenticate with your account. Once you authenticate, you will be redirected back to the app, which will display a link to your posted tweet.
 
+![Animated GIF of the app in action](./app-flow.gif)
+
 That's it. That's all this app does. It's just a simple demo to illustrate how to connect to the Twitter API v2 via Python FastAPI.
