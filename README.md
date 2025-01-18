@@ -4,7 +4,7 @@ X has officially launched version 2 of the Twitter API. And despite Elon Musk's 
 
 (Note that it is still possible to create an automated bot. You will just have to manually authorize it when you first spin it up, and then the bot can continually generate refresh tokens to keep itself logged in. This is a bit of a pain, because it requires database storage of refresh tokens and regular workflow runs to generate new ones. That is, however, outside the scope of this demo.)
 
-Currently, the documentation for API connectivity via the free tier is extremely limited. In the absence of good docs, I've created this demo to illustrate how to connect to the v2 API via a Python FastAPI application. It's a little complicated, especially if you want to tweet media, because the media upload endpoint still uses OAuth1, whereas the tweet endpoint uses OAuth2. So you have to use both authentication methods in the same app.
+Currently, the documentation for API connectivity via the free tier is extremely limited. In the absence of good docs, I've created this demo to illustrate how to connect to the v2 API via a Python FastAPI application with PKCE flow. It's a little complicated, especially if you want to tweet media, because the media upload endpoint still uses OAuth1, whereas the tweet endpoint uses OAuth2. So you have to use both authentication methods in the same app.
 
 ## Setup
 
@@ -51,7 +51,7 @@ You will also need to generate an access token and secret from your application'
 
 ## Usage
 
-To run the application, use `uv run tweet.py`. This will start a Flask server on port 5000. You can then navigate to [http://127.0.0.1:5000](http://127.0.0.1:5000) in a web browser to view the app.
+To run the application, use `uv run tweet.py`. This will start a FastAPI server on port 5000. You can then navigate to [http://127.0.0.1:5000](http://127.0.0.1:5000) in a web browser to view the app.
 
 The app consists of a simple form that allows you to input text and select an image to go with the text. Supply some text and then click "Post Tweet". You will be redirected to Twitter to authenticate with your account. Once you authenticate, you will be redirected back to the app, which will display a link to your posted tweet.
 
