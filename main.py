@@ -19,7 +19,7 @@ from x_twitter_api_v2_demo.auth import (
 )
 from x_twitter_api_v2_demo.tweet import post_tweet
 from x_twitter_api_v2_demo.utils import get_temp_dir
-from x_twitter_api_v2_demo.session import save_session, load_session
+from x_twitter_api_v2_demo.session import save_token, get_user_session
 
 # Configure logging
 logger = logging.getLogger("uvicorn.error")
@@ -34,11 +34,13 @@ templates = Jinja2Templates(directory="templates")
 
 # Global state
 oauth_states: Dict[str, Dict[str, Any]] = {}
-current_session: Optional[OAuth2Session] = None
-current_token: Optional[Dict[str, Any]] = None
 
-# Try to load existing session
-current_session, current_token = load_session()
+# For demo purposes, we'll use a fixed user ID
+# In a real app, this would come from your authentication system
+DEMO_USER_ID = "demo_user"
+
+# Try to load existing session for demo user
+current_session, current_token = get_user_session(DEMO_USER_ID)
 if current_session and current_token:
     logger.info("Loaded existing Twitter session with token expiry: %s", current_token.get("expires_at"))
 else:
@@ -51,8 +53,7 @@ def show_form(request: Request) -> _TemplateResponse:
     """
     return templates.TemplateResponse("index.html", {"request": request})
 
-
-@app.post("/", response_class=HTMLResponse)
+@app.post("/", response_class=HTMLResponse, response_model=None)
 async def start_oauth(
     request: Request,
     text: str = Form(...),
@@ -88,7 +89,7 @@ async def start_oauth(
                     client_id=os.environ.get("X_CLIENT_ID"),
                     client_secret=os.environ.get("X_CLIENT_SECRET")
                 )
-                save_session(current_session, current_token)
+                save_token(DEMO_USER_ID, current_token)
                 logger.info("Successfully refreshed token, new expiry: %s", current_token.get("expires_at"))
             
             logger.info("Attempting to use session (token expires at: %s)", current_token.get("expires_at"))
@@ -208,8 +209,8 @@ def callback(request: Request, code: str, state: str) -> _TemplateResponse:
     # Update current session and save it
     current_session = twitter_session
     current_token = token
-    save_session(twitter_session, token)
-    logger.info("Saved new session to disk")
+    save_token(DEMO_USER_ID, token)
+    logger.info("Saved new token to disk")
 
     # Post the tweet
     logger.info("Attempting to post tweet with new token")

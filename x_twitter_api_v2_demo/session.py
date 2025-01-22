@@ -1,8 +1,8 @@
 import os
 import json
-import pickle
 from typing import Optional, Dict, Any
 from requests_oauthlib import OAuth2Session
+from .auth import create_oauth2_session
 
 def get_sessions_dir() -> str:
     """Get or create the sessions directory."""
@@ -10,43 +10,50 @@ def get_sessions_dir() -> str:
     os.makedirs(sessions_dir, exist_ok=True)
     return sessions_dir
 
-def save_session(session: OAuth2Session, token: Dict[str, Any]) -> None:
-    """Save the OAuth2Session and token to a file."""
+def save_token(user_id: str, token: Dict[str, Any]) -> None:
+    """Save a user's token to the tokens file."""
     sessions_dir = get_sessions_dir()
+    tokens_path = os.path.join(sessions_dir, "tokens.json")
     
-    # Save token as JSON
-    token_path = os.path.join(sessions_dir, "token.json")
-    with open(token_path, "w") as f:
-        json.dump(token, f)
+    # Load existing tokens
+    tokens = {}
+    if os.path.exists(tokens_path):
+        try:
+            with open(tokens_path, "r") as f:
+                tokens = json.load(f)
+        except json.JSONDecodeError:
+            pass
     
-    # Save session as pickle
-    session_path = os.path.join(sessions_dir, "session.pkl")
-    with open(session_path, "wb") as f:
-        pickle.dump(session, f)
+    # Update token for this user
+    tokens[user_id] = token
+    
+    # Save updated tokens
+    with open(tokens_path, "w") as f:
+        json.dump(tokens, f)
 
-def load_session() -> tuple[Optional[OAuth2Session], Optional[Dict[str, Any]]]:
-    """Load the OAuth2Session and token from files if they exist."""
+def load_token(user_id: str) -> Optional[Dict[str, Any]]:
+    """Load a user's token from the tokens file."""
     sessions_dir = get_sessions_dir()
-    token_path = os.path.join(sessions_dir, "token.json")
-    session_path = os.path.join(sessions_dir, "session.pkl")
+    tokens_path = os.path.join(sessions_dir, "tokens.json")
     
-    token = None
-    session = None
+    if not os.path.exists(tokens_path):
+        return None
     
-    # Load token if exists
-    if os.path.exists(token_path):
-        try:
-            with open(token_path, "r") as f:
-                token = json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    
-    # Load session if exists
-    if os.path.exists(session_path):
-        try:
-            with open(session_path, "rb") as f:
-                session = pickle.load(f)
-        except (pickle.UnpicklingError, IOError):
-            pass
-    
-    return session, token 
+    try:
+        with open(tokens_path, "r") as f:
+            tokens = json.load(f)
+            return tokens.get(user_id)
+    except (json.JSONDecodeError, IOError):
+        return None
+
+def create_session_from_token(token: Dict[str, Any]) -> OAuth2Session:
+    """Create a new OAuth2Session from a token."""
+    return create_oauth2_session(token)
+
+def get_user_session(user_id: str) -> tuple[Optional[OAuth2Session], Optional[Dict[str, Any]]]:
+    """Get a user's session and token."""
+    token = load_token(user_id)
+    if token:
+        session = create_session_from_token(token)
+        return session, token
+    return None, None 

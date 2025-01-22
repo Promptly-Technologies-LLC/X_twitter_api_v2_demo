@@ -51,7 +51,13 @@ You will also need to generate an access token and secret from your application'
 
 ## Usage
 
-To run the application, use `uv run python main.py`. This will start a FastAPI server on port 5000. You can then navigate to [http://127.0.0.1:5000](http://127.0.0.1:5000) in a web browser to view the app.
+To run the application, use:
+
+```bash
+uv run python main.py
+```
+
+This will start a FastAPI server on port 5000. You can then navigate to [http://127.0.0.1:5000](http://127.0.0.1:5000) in a web browser to view the app.
 
 The app consists of a simple form that allows you to input text and select an image to go with the text. Supply some text and then click "Post Tweet". You will be redirected to Twitter to authenticate with your account. Once you authenticate, you will be redirected back to the app, which will display a link to your posted tweet.
 
