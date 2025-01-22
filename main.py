@@ -9,11 +9,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from requests import Response
 from starlette.templating import _TemplateResponse
+from oauthlib.oauth2.rfc6749.errors import TokenExpiredError
 
 from x_twitter_api_v2_demo.auth import (
     generate_code_verifier,
     generate_code_challenge,
     create_oauth2_session,
+    is_token_expired,
 )
 from x_twitter_api_v2_demo.tweet import post_tweet
 from x_twitter_api_v2_demo.utils import get_temp_dir
@@ -76,37 +78,63 @@ async def start_oauth(
 
     # If we have a saved session, try to use it
     if current_session and current_token:
-        logger.info("Attempting to use saved session (token expires at: %s)", current_token.get("expires_at"))
-        response = post_tweet(text=text, media_path=image_path, new_token=current_token)
-        
-        if response.ok:
-            logger.info("Successfully posted tweet using saved session")
-            # Extract tweet link on success
-            tweet_text = response.json().get("data", {}).get("text", "")
-            tweet_link_match = re.search(r"https://(?:t\.co|x\.com)/\w+", tweet_text)
-            tweet_link = tweet_link_match.group(0) if tweet_link_match else None
-            return templates.TemplateResponse(
-                "index.html",
-                {
-                    "request": request,
-                    "tweet_link": tweet_link,
-                    "message": "Tweet posted successfully!"
-                }
-            )
-        else:
-            # Clear invalid session and proceed with new auth
-            logger.warning(
-                "Saved session failed with status %d: %s", 
-                response.status_code, 
-                response.text
-            )
+        try:
+            # Check if token is about to expire
+            if is_token_expired(current_token):
+                logger.info("Token is expired or about to expire, attempting refresh")
+                # The session will auto-refresh the token if possible
+                current_token = current_session.refresh_token(
+                    "https://api.x.com/2/oauth2/token",
+                    client_id=os.environ.get("X_CLIENT_ID"),
+                    client_secret=os.environ.get("X_CLIENT_SECRET")
+                )
+                save_session(current_session, current_token)
+                logger.info("Successfully refreshed token, new expiry: %s", current_token.get("expires_at"))
+            
+            logger.info("Attempting to use session (token expires at: %s)", current_token.get("expires_at"))
+            response = post_tweet(text=text, media_path=image_path, new_token=current_token)
+            
+            if response.ok:
+                logger.info("Successfully posted tweet using saved session")
+                # Extract tweet link on success
+                tweet_text = response.json().get("data", {}).get("text", "")
+                tweet_link_match = re.search(r"https://(?:t\.co|x\.com)/\w+", tweet_text)
+                tweet_link = tweet_link_match.group(0) if tweet_link_match else None
+                return templates.TemplateResponse(
+                    "index.html",
+                    {
+                        "request": request,
+                        "tweet_link": tweet_link,
+                        "message": "Tweet posted successfully!"
+                    }
+                )
+            elif response.status_code == 401:
+                logger.warning("Unauthorized error, token might be invalid")
+                current_session = None
+                current_token = None
+            else:
+                # Other error occurred
+                logger.warning(
+                    "Saved session failed with status %d: %s", 
+                    response.status_code, 
+                    response.text
+                )
+                current_session = None
+                current_token = None
+                
+        except TokenExpiredError:
+            logger.warning("Token expired and refresh failed")
+            current_session = None
+            current_token = None
+        except Exception as e:
+            logger.error("Error using saved session: %s", str(e))
             current_session = None
             current_token = None
 
     # Start new OAuth flow
     code_verifier = generate_code_verifier()
     code_challenge = generate_code_challenge(code_verifier)
-    twitter_session = create_oauth2_session()
+    twitter_session = create_oauth2_session()  # No token for initial auth
     
     logger.info("Starting new OAuth2 flow with Twitter")
     authorization_url, oauth_state = twitter_session.authorization_url(
