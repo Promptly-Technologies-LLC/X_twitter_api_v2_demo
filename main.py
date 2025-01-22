@@ -2,10 +2,14 @@ import os
 import re
 import logging
 import uuid
+from typing import Dict, Optional, Any
 from dotenv import load_dotenv
+from requests_oauthlib import OAuth2Session
 from fastapi import FastAPI, Request, Form, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from requests import Response
+from starlette.templating import _TemplateResponse
 
 from x_twitter_api_v2_demo.auth import (
     generate_code_verifier,
@@ -27,12 +31,12 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 # Global state
-oauth_states = {}
-code_verifier = generate_code_verifier()
-code_challenge = generate_code_challenge(code_verifier)
+oauth_states: Dict[str, Dict[str, Any]] = {}
+code_verifier: str = generate_code_verifier()
+code_challenge: str = generate_code_challenge(code_verifier)
 
 @app.get("/", response_class=HTMLResponse)
-def show_form(request: Request):
+def show_form(request: Request) -> _TemplateResponse:
     """
     Serve a basic form (index.html) for posting tweets.
     """
@@ -43,8 +47,8 @@ def show_form(request: Request):
 async def start_oauth(
     request: Request,
     text: str = Form(...),
-    image: UploadFile = File(None)
-):
+    image: Optional[UploadFile] = File(None)
+) -> RedirectResponse:
     """
     Handle the form submission:
       - Save text and image.
@@ -52,7 +56,7 @@ async def start_oauth(
     """
     # Save the text and optional image in a newly generated state
     state = str(uuid.uuid4())
-    data_to_store = {"text": text, "image_path": None}
+    data_to_store: Dict[str, Optional[str]] = {"text": text, "image_path": None}
 
     if image and image.filename:
         temp_dir = get_temp_dir()
@@ -62,8 +66,8 @@ async def start_oauth(
         data_to_store["image_path"] = image_path
 
     # Create an OAuth2Session and store relevant data
-    twitter_session = create_oauth2_session()
-    logger.info(f"Starting OAuth2 flow with Twitter")
+    twitter_session: OAuth2Session = create_oauth2_session()
+    logger.info("Starting OAuth2 flow with Twitter")
     assert code_challenge is not None, "Code challenge is not set"
     authorization_url, oauth_state = twitter_session.authorization_url(
         "https://twitter.com/i/oauth2/authorize",
@@ -82,7 +86,7 @@ async def start_oauth(
     return RedirectResponse(authorization_url)
 
 @app.get("/oauth/callback", response_class=HTMLResponse)
-def callback(request: Request, code: str, state: str):
+def callback(request: Request, code: str, state: str) -> _TemplateResponse:
     """
     Callback route after user authenticates with Twitter.
       - Exchange code for token.
@@ -90,16 +94,22 @@ def callback(request: Request, code: str, state: str):
     """
     # Retrieve stored info for this state
     if state not in oauth_states:
-        return HTMLResponse(content="Invalid state or session has expired.", status_code=400)
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "message": "Invalid state or session has expired."
+            }
+        )
 
     stored_data = oauth_states[state]
-    text = stored_data["text"]
-    image_path = stored_data["image_path"]
-    twitter_session = stored_data["twitter_session"]
+    text: str = stored_data["text"]
+    image_path: Optional[str] = stored_data["image_path"]
+    twitter_session: OAuth2Session = stored_data["twitter_session"]
 
     # Exchange code for token
     assert code_verifier is not None, "Code verifier is not set"
-    token = twitter_session.fetch_token(
+    token: Dict[str, Any] = twitter_session.fetch_token(
         token_url="https://api.x.com/2/oauth2/token",
         client_id=os.environ.get("X_CLIENT_ID"),
         client_secret=os.environ.get("X_CLIENT_SECRET"),
@@ -108,9 +118,9 @@ def callback(request: Request, code: str, state: str):
     )
 
     # Post the tweet
-    response = post_tweet(text=text, media_path=image_path, new_token=token)
+    response: Response = post_tweet(text=text, media_path=image_path, new_token=token)
     
-    message = None
+    message: Optional[str] = None
     if response.ok:
         message = "Tweet posted successfully!"
     else:
@@ -137,7 +147,7 @@ def callback(request: Request, code: str, state: str):
     # Attempt to extract the short t.co or x.com link from the returned tweet text
     tweet_text = response.json().get("data", {}).get("text", "")
     tweet_link_match = re.search(r"https://(?:t\.co|x\.com)/\w+", tweet_text)
-    tweet_link = tweet_link_match.group(0) if tweet_link_match else None
+    tweet_link: Optional[str] = tweet_link_match.group(0) if tweet_link_match else None
 
     # Remove state data to avoid re-use or memory leaks
     del oauth_states[state]
