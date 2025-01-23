@@ -2,7 +2,7 @@
 
 X has officially launched version 2 of the Twitter API. And despite Elon Musk's threats to discontinue all free access to the API, there **is** a [free tier](https://developer.twitter.com/en/docs/twitter-api/getting-started/about-twitter-api) available. It is quite limited, however. Free users can only access the endpoints to upload media, create tweets (up to 500 per month), and manage their own user data. They can't view tweets, like tweets, retweet tweets, or reply to tweets. They can't even view their own timeline. The free-tier endpoints also don't support application authentication, so you have to use Oauth2 user authentication, in which the user manually logs into their account and authorizes the app to use it.
 
-(Note that it is still possible to create an automated bot. You will just have to manually authorize it when you first spin it up, and then the bot can continually generate refresh tokens to keep itself logged in. This is a bit of a pain, because it requires database storage of refresh tokens and regular workflow runs to generate new ones. That is, however, outside the scope of this demo.)
+(Note that it is still possible to create an automated bot. You will just have to manually authorize it when you first spin it up, and then the bot can keep itself logged in by generating refresh tokens for up to six months.)
 
 Currently, the documentation for API connectivity via the free tier is extremely limited. In the absence of good docs, I've created this demo to illustrate how to connect to the v2 API via a Python FastAPI application with PKCE flow. It's a little complicated, especially if you want to tweet media, because the media upload endpoint still uses OAuth1, whereas the tweet endpoint uses OAuth2. So you have to use both authentication methods in the same app.
 
@@ -63,4 +63,4 @@ The app consists of a simple form that allows you to input text and select an im
 
 ![Animated GIF of the app in action](./app-flow.gif)
 
-That's it. That's all this app does. It's just a simple demo to illustrate how to connect to the Twitter API v2 via Python FastAPI.
+Once you've authenticated, your access and refresh tokens will be stored in `sessions/tokens.json`. Your refresh token will be used to generate new access tokens when your access token expires. It should be good for six months, after which you will need to authenticate again to generate a new refresh token. (No logout functionality is provided in this demo, but you can manually delete the `sessions/tokens.json` file to log out of your account.)
